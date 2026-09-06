@@ -1,0 +1,23 @@
+name: Friendly-Kits
+version: 1.0
+main: com.friendlykits.FriendlyKitsPlugin
+api-version: '1.21'
+author: Developer
+description: Customizable interactive kits plugin with GUI preview.
+
+commands:
+  kits:
+    description: Open the kits menu.
+    permission: friendlykits.use
+    usage: /kits
+  kit:
+    description: Manage and claim kits.
+    usage: /kit <create|delete|reload> [name]
+
+permissions:
+  friendlykits.use:
+    description: Allows viewing the kits menu.
+    default: true
+  friendlykits.admin:
+    description: Allows creating, deleting, and editing kits.
+    default: op
