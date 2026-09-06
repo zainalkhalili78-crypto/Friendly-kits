@@ -1,0 +1,11 @@
+# إعدادات ورسائل إضافة Friendly-Kits القابلة للتعديل
+messages:
+  prefix: "&8[&aFriendly-Kits&8] &r"
+  no-permission: "&cYou do not have permission to do this!"
+  kit-created: "&aKit &e%kit% &ahas been successfully created from your inventory!"
+  kit-deleted: "&cKit &e%kit% &chas been deleted."
+  kit-received: "&aYou received the kit: &e%kit%&a!"
+  kit-not-found: "&cKit not found."
+  icon-updated: "&aThe icon for kit &e%kit% &ahas been updated to the item in your hand!"
+  hold-item-error: "&cYou must hold an item in your main hand to set it as an icon."
+  reload-success: "&aConfiguration files reloaded successfully."
