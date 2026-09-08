@@ -24,15 +24,15 @@ import java.util.*;
 
 /**
  * الكلاس الرئيسي لإضافة Friendly-Kits:
- * يدير إنشاء الأطقم، المعاينة، الأيقونات، الصلاحيات، الإكمال التلقائي الذكي،
- * ونظام المؤقتات وزمن الانتظار (Timers / Cooldowns).
+ * يعالج حفظ واستنساخ الأدوات والدروع بشكل عميق (Deep Clone) لمنع إعادة كتابة الطقم
+ * عند استلامه بواسطة أمر /kit <name>.
  */
 public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private File kitsFile;
     private FileConfiguration kitsConfig;
 
-    // تخزين أوقات استلام اللاعبين: مفتاح السجل هو "UUID_KitName" والقيمة هي التوقيت بالمللي ثانية
+    // تسجيل فترات الانتظار لكل لاعب
     private final Map<String, Long> cooldowns = new HashMap<>();
 
     private final String MAIN_MENU_TITLE = ChatColor.DARK_GREEN + "Select a Kit";
@@ -78,6 +78,8 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
     public void saveKitsConfig() {
         try {
             kitsConfig.save(kitsFile);
+            // إعادة قراءة الملف فوراً لتحديث الذاكرة
+            kitsConfig = YamlConfiguration.loadConfiguration(kitsFile);
         } catch (IOException e) {
             getLogger().severe("Could not save kits.yml!");
         }
@@ -99,9 +101,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         return glass;
     }
 
-    /**
-     * تحويل نص الوقت (مثل 10s, 5m, 2h, 1d) إلى ثوانٍ
-     */
     private long parseTimeToSeconds(String input) {
         input = input.toLowerCase().trim();
         long multiplier = 1;
@@ -128,9 +127,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         }
     }
 
-    /**
-     * تحويل الثواني المتبقية إلى نص منسق ومقروء للاعب
-     */
     private String formatSeconds(long seconds) {
         if (seconds <= 0) return "0s";
 
@@ -148,11 +144,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         return sb.toString().trim();
     }
 
-    /**
-     * فحص ما إذا كان الطقم في وضع الانتظار (Cooldown) بالنسبة للاعب
-     */
     private boolean checkCooldown(Player player, String kitName) {
-        // تجاوز الانتظار للمشرفين أو لمن يملك صلاحية bypass
         if (player.hasPermission("friendlykits.admin") || player.hasPermission("friendlykits.bypass")) {
             return true;
         }
@@ -181,9 +173,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         return true;
     }
 
-    /**
-     * تسجيل وقت استلام الطقم
-     */
     private void setCooldown(Player player, String kitName) {
         String key = player.getUniqueId().toString() + "_" + kitName.toLowerCase();
         cooldowns.put(key, System.currentTimeMillis());
@@ -216,7 +205,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
-            // أمر إضافة مؤقت: /kit add timer <kitname> <time>
+            // أمر إضافة مؤقت
             if (args[0].equalsIgnoreCase("add")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -243,11 +232,12 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                             .replace("%time%", formatSeconds(seconds)));
                     return true;
                 } else {
-                    player.sendMessage(ChatColor.RED + "Usage: /kit add timer <kitname> <time> (e.g. 10m, 1h)");
+                    player.sendMessage(ChatColor.RED + "Usage: /kit add timer <kitname> <time>");
                     return true;
                 }
             }
 
+            // أمر إعادة التحميل
             if (args[0].equalsIgnoreCase("reload")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -259,6 +249,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
+            // أمر إنشاء الطقم (فقط عبر كلمة create الصريحة)
             if (args[0].equalsIgnoreCase("create")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -275,6 +266,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
+            // أمر حذف طقم
             if (args[0].equalsIgnoreCase("delete")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -297,7 +289,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
-            // استلام طقم عبر الأمر المباشر: /kit <kitname>
+            // استلام الطقم: /kit <kitname> (دون المساس ببيانات الطقم المحفوظة)
             String kitName = args[0].toLowerCase();
             if (kitsConfig.contains("kits." + kitName)) {
                 String requiredPerm = "friendlykits.use." + kitName;
@@ -306,7 +298,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                     return true;
                 }
 
-                // فحص المؤقت قبل المنح
                 if (!checkCooldown(player, kitName)) {
                     return true;
                 }
@@ -354,32 +345,24 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 }
             } else if (args.length == 2) {
                 if (args[0].equalsIgnoreCase("add") && player.hasPermission("friendlykits.admin")) {
-                    if ("timer".startsWith(args[1].toLowerCase())) {
-                        completions.add("timer");
-                    }
+                    if ("timer".startsWith(args[1].toLowerCase())) completions.add("timer");
                 } else if (args[0].equalsIgnoreCase("delete") && player.hasPermission("friendlykits.admin")) {
                     if (kitsConfig.isConfigurationSection("kits")) {
                         for (String kitName : kitsConfig.getConfigurationSection("kits").getKeys(false)) {
-                            if (kitName.toLowerCase().startsWith(args[1].toLowerCase())) {
-                                completions.add(kitName);
-                            }
+                            if (kitName.toLowerCase().startsWith(args[1].toLowerCase())) completions.add(kitName);
                         }
                     }
                 }
             } else if (args.length == 3 && args[0].equalsIgnoreCase("add") && args[1].equalsIgnoreCase("timer") && player.hasPermission("friendlykits.admin")) {
                 if (kitsConfig.isConfigurationSection("kits")) {
                     for (String kitName : kitsConfig.getConfigurationSection("kits").getKeys(false)) {
-                        if (kitName.toLowerCase().startsWith(args[2].toLowerCase())) {
-                            completions.add(kitName);
-                        }
+                        if (kitName.toLowerCase().startsWith(args[2].toLowerCase())) completions.add(kitName);
                     }
                 }
             } else if (args.length == 4 && args[0].equalsIgnoreCase("add") && args[1].equalsIgnoreCase("timer") && player.hasPermission("friendlykits.admin")) {
                 List<String> times = Arrays.asList("30s", "1m", "5m", "30m", "1h", "24h", "1d");
                 for (String t : times) {
-                    if (t.startsWith(args[3].toLowerCase())) {
-                        completions.add(t);
-                    }
+                    if (t.startsWith(args[3].toLowerCase())) completions.add(t);
                 }
             }
         }
@@ -387,40 +370,55 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         return completions;
     }
 
+    /**
+     * حفظ أغراض ودروع اللاعب واليد الإضافية باستخدام استنساخ حقيقي (Deep Clone)
+     */
     private void saveKitFromPlayer(String kitName, Player player) {
         String basePath = "kits." + kitName;
+        long existingCooldown = kitsConfig.getLong(basePath + ".cooldown", 0);
+        ItemStack existingIcon = kitsConfig.getItemStack(basePath + ".icon");
+
+        // مسح القسم القديم بالكامل لمنع تراكم أي عناصر قديمة
         kitsConfig.set(basePath, null);
 
+        // 1. استنساخ وحفظ خانات الحقيبة
         ItemStack[] storage = player.getInventory().getStorageContents();
         for (int i = 0; i < storage.length; i++) {
             ItemStack item = storage[i];
             if (item != null && item.getType() != Material.AIR) {
-                kitsConfig.set(basePath + ".storage." + i, item);
+                kitsConfig.set(basePath + ".storage." + i, item.clone());
             }
         }
 
+        // 2. استنساخ وحفظ الدروع الأربعة
         ItemStack helmet = player.getInventory().getHelmet();
         ItemStack chest = player.getInventory().getChestplate();
         ItemStack legs = player.getInventory().getLeggings();
         ItemStack boots = player.getInventory().getBoots();
 
-        if (helmet != null && helmet.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.helmet", helmet);
-        if (chest != null && chest.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.chestplate", chest);
-        if (legs != null && legs.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.leggings", legs);
-        if (boots != null && boots.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.boots", boots);
+        if (helmet != null && helmet.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.helmet", helmet.clone());
+        if (chest != null && chest.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.chestplate", chest.clone());
+        if (legs != null && legs.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.leggings", legs.clone());
+        if (boots != null && boots.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.boots", boots.clone());
 
+        // 3. استنساخ وحفظ اليد الإضافية
         ItemStack offhand = player.getInventory().getItemInOffHand();
         if (offhand != null && offhand.getType() != Material.AIR) {
-            kitsConfig.set(basePath + ".offhand", offhand);
+            kitsConfig.set(basePath + ".offhand", offhand.clone());
         }
 
-        ItemStack hand = player.getInventory().getItemInMainHand();
-        ItemStack icon = (hand != null && hand.getType() != Material.AIR) ? hand.clone() : new ItemStack(Material.CHEST);
-        icon.setAmount(1);
-        kitsConfig.set(basePath + ".icon", icon);
+        // 4. تعيين الأيقونة
+        if (existingIcon != null) {
+            kitsConfig.set(basePath + ".icon", existingIcon.clone());
+        } else {
+            ItemStack hand = player.getInventory().getItemInMainHand();
+            ItemStack icon = (hand != null && hand.getType() != Material.AIR) ? hand.clone() : new ItemStack(Material.CHEST);
+            icon.setAmount(1);
+            kitsConfig.set(basePath + ".icon", icon);
+        }
 
-        // مؤقت افتراضي بصفر ثانية
-        kitsConfig.set(basePath + ".cooldown", 0);
+        // الحفاظ على المؤقت المسجل
+        kitsConfig.set(basePath + ".cooldown", existingCooldown);
 
         saveKitsConfig();
     }
@@ -475,7 +473,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                     int slot = Integer.parseInt(key);
                     ItemStack item = kitsConfig.getItemStack(basePath + ".storage." + key);
                     if (slot < 36 && item != null) {
-                        previewInv.setItem(slot, item);
+                        previewInv.setItem(slot, item.clone());
                     }
                 } catch (NumberFormatException ignored) {}
             }
@@ -486,13 +484,13 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         ItemStack legs = kitsConfig.getItemStack(basePath + ".armor.leggings");
         ItemStack boots = kitsConfig.getItemStack(basePath + ".armor.boots");
 
-        if (helmet != null) previewInv.setItem(36, helmet);
-        if (chest != null) previewInv.setItem(37, chest);
-        if (legs != null) previewInv.setItem(38, legs);
-        if (boots != null) previewInv.setItem(39, boots);
+        if (helmet != null) previewInv.setItem(36, helmet.clone());
+        if (chest != null) previewInv.setItem(37, chest.clone());
+        if (legs != null) previewInv.setItem(38, legs.clone());
+        if (boots != null) previewInv.setItem(39, boots.clone());
 
         ItemStack offhand = kitsConfig.getItemStack(basePath + ".offhand");
-        if (offhand != null) previewInv.setItem(41, offhand);
+        if (offhand != null) previewInv.setItem(41, offhand.clone());
 
         ItemStack claimBtn = new ItemStack(Material.LIME_STAINED_GLASS_PANE);
         ItemMeta btnMeta = claimBtn.getItemMeta();
@@ -512,9 +510,13 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         player.openInventory(previewInv);
     }
 
+    /**
+     * إعطاء الطقم للاعب عبر استنساخ الأدوات بالكامل لعدم التعديل على الملف
+     */
     private void giveKit(Player player, String kitName) {
         String basePath = "kits." + kitName;
 
+        // 1. إضافة الأغراض للحقيبة بنسخ جديدة
         if (kitsConfig.isConfigurationSection(basePath + ".storage")) {
             for (String key : kitsConfig.getConfigurationSection(basePath + ".storage").getKeys(false)) {
                 ItemStack item = kitsConfig.getItemStack(basePath + ".storage." + key);
@@ -524,6 +526,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
             }
         }
 
+        // 2. إلباس الدروع بنسخ مستقلة
         ItemStack helmet = kitsConfig.getItemStack(basePath + ".armor.helmet");
         ItemStack chest = kitsConfig.getItemStack(basePath + ".armor.chestplate");
         ItemStack legs = kitsConfig.getItemStack(basePath + ".armor.leggings");
@@ -561,6 +564,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
             }
         }
 
+        // 3. إضافة أداة اليد الإضافية بنسخة مستقلة
         ItemStack offhand = kitsConfig.getItemStack(basePath + ".offhand");
         if (offhand != null && offhand.getType() != Material.AIR) {
             if (player.getInventory().getItemInOffHand().getType() == Material.AIR) {
@@ -628,7 +632,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                     return;
                 }
 
-                // فحص المؤقت عند الضغط على الزر الأخضر
                 if (!checkCooldown(player, kitName)) {
                     player.closeInventory();
                     return;
