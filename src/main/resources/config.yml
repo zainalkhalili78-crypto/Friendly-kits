@@ -1,4 +1,3 @@
-# إعدادات ورسائل إضافة Friendly-Kits القابلة للتعديل
 messages:
   prefix: "&8[&aFriendly-Kits&8] &r"
   no-permission: "&cYou do not have permission to do this!"
@@ -9,3 +8,6 @@ messages:
   icon-updated: "&aThe icon for kit &e%kit% &ahas been updated to the item in your hand!"
   hold-item-error: "&cYou must hold an item in your main hand to set it as an icon."
   reload-success: "&aConfiguration files reloaded successfully."
+  timer-set: "&aTimer for kit &e%kit% &ahas been set to &e%time%&a!"
+  cooldown-active: "&cYou must wait &e%time% &cbefore claiming kit &e%kit% &cagain!"
+  invalid-time: "&cInvalid time format! Use numbers with s/m/h/d (e.g. 30s, 10m, 2h, 1d)."
