@@ -24,15 +24,15 @@ import java.util.*;
 
 /**
  * الكلاس الرئيسي لإضافة Friendly-Kits:
- * يعالج حفظ واستنساخ الأدوات والدروع بشكل عميق (Deep Clone) لمنع إعادة كتابة الطقم
- * عند استلامه بواسطة أمر /kit <name>.
+ * يدير الصلاحيات المستقلة للأطقم، ودعم صلاحية تجاوز المؤقت لكل طقم
+ * بالصيغة: friendlykits.passtime.<kitname>
  */
 public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
 
     private File kitsFile;
     private FileConfiguration kitsConfig;
 
-    // تسجيل فترات الانتظار لكل لاعب
+    // تخزين أوقات استلام اللاعبين: "UUID_kitname" -> وقت الاستلام بالمللي ثانية
     private final Map<String, Long> cooldowns = new HashMap<>();
 
     private final String MAIN_MENU_TITLE = ChatColor.DARK_GREEN + "Select a Kit";
@@ -78,7 +78,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
     public void saveKitsConfig() {
         try {
             kitsConfig.save(kitsFile);
-            // إعادة قراءة الملف فوراً لتحديث الذاكرة
             kitsConfig = YamlConfiguration.loadConfiguration(kitsFile);
         } catch (IOException e) {
             getLogger().severe("Could not save kits.yml!");
@@ -144,8 +143,18 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         return sb.toString().trim();
     }
 
+    /**
+     * فحص وقت الانتظار: يدعم صلاحية التجاوز المخصصة للطقم
+     */
     private boolean checkCooldown(Player player, String kitName) {
+        // 1. فحص صلاحيات التجاوز العامة
         if (player.hasPermission("friendlykits.admin") || player.hasPermission("friendlykits.bypass")) {
+            return true;
+        }
+
+        // 2. فحص صلاحية التجاوز المخصصة لهذا الطقم بعينه
+        String passTimePerm = "friendlykits.passtime." + kitName.toLowerCase();
+        if (player.hasPermission(passTimePerm)) {
             return true;
         }
 
@@ -155,19 +164,21 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         }
 
         String key = player.getUniqueId().toString() + "_" + kitName.toLowerCase();
-        long now = System.currentTimeMillis();
 
-        if (cooldowns.containsKey(key)) {
-            long lastClaim = cooldowns.get(key);
-            long elapsedSeconds = (now - lastClaim) / 1000;
+        // السماح بالاستلام الأول دائماً
+        if (!cooldowns.containsKey(key)) {
+            return true;
+        }
 
-            if (elapsedSeconds < cooldownSeconds) {
-                long remainingSeconds = cooldownSeconds - elapsedSeconds;
-                player.sendMessage(getMsg("cooldown-active")
-                        .replace("%kit%", kitName)
-                        .replace("%time%", formatSeconds(remainingSeconds)));
-                return false;
-            }
+        long lastClaim = cooldowns.get(key);
+        long elapsedSeconds = (System.currentTimeMillis() - lastClaim) / 1000;
+
+        if (elapsedSeconds < cooldownSeconds) {
+            long remainingSeconds = cooldownSeconds - elapsedSeconds;
+            player.sendMessage(getMsg("cooldown-active")
+                    .replace("%kit%", kitName)
+                    .replace("%time%", formatSeconds(remainingSeconds)));
+            return false;
         }
 
         return true;
@@ -176,6 +187,11 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
     private void setCooldown(Player player, String kitName) {
         String key = player.getUniqueId().toString() + "_" + kitName.toLowerCase();
         cooldowns.put(key, System.currentTimeMillis());
+    }
+
+    private void clearCooldownsForKit(String kitName) {
+        String suffix = "_" + kitName.toLowerCase();
+        cooldowns.keySet().removeIf(k -> k.endsWith(suffix));
     }
 
     @Override
@@ -197,7 +213,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         if (command.getName().equalsIgnoreCase("kit")) {
             if (args.length == 0) {
                 if (player.hasPermission("friendlykits.admin")) {
-                    player.sendMessage(ChatColor.YELLOW + "Admin: /kit <create|delete|reload|add timer> [params]");
+                    player.sendMessage(ChatColor.YELLOW + "Admin: /kit <create|delete|reload|add timer|reset timer> [params]");
                     player.sendMessage(ChatColor.GRAY + "Player: /kit <kitname>");
                 } else {
                     player.sendMessage(ChatColor.YELLOW + "Usage: /kit <kitname>");
@@ -205,7 +221,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
-            // أمر إضافة مؤقت
             if (args[0].equalsIgnoreCase("add")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -227,6 +242,8 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
 
                     kitsConfig.set("kits." + kitName + ".cooldown", seconds);
                     saveKitsConfig();
+                    clearCooldownsForKit(kitName);
+
                     player.sendMessage(getMsg("timer-set")
                             .replace("%kit%", kitName)
                             .replace("%time%", formatSeconds(seconds)));
@@ -237,7 +254,17 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 }
             }
 
-            // أمر إعادة التحميل
+            if (args[0].equalsIgnoreCase("reset") && args.length >= 3 && args[1].equalsIgnoreCase("timer")) {
+                if (!player.hasPermission("friendlykits.admin")) {
+                    player.sendMessage(getMsg("no-permission"));
+                    return true;
+                }
+                String kitName = args[2].toLowerCase();
+                clearCooldownsForKit(kitName);
+                player.sendMessage(ChatColor.GREEN + "Cooldowns for kit " + kitName + " have been reset!");
+                return true;
+            }
+
             if (args[0].equalsIgnoreCase("reload")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -249,7 +276,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
-            // أمر إنشاء الطقم (فقط عبر كلمة create الصريحة)
             if (args[0].equalsIgnoreCase("create")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -266,7 +292,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                 return true;
             }
 
-            // أمر حذف طقم
             if (args[0].equalsIgnoreCase("delete")) {
                 if (!player.hasPermission("friendlykits.admin")) {
                     player.sendMessage(getMsg("no-permission"));
@@ -285,11 +310,12 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
 
                 kitsConfig.set("kits." + kitName, null);
                 saveKitsConfig();
+                clearCooldownsForKit(kitName);
                 player.sendMessage(getMsg("kit-deleted").replace("%kit%", kitName));
                 return true;
             }
 
-            // استلام الطقم: /kit <kitname> (دون المساس ببيانات الطقم المحفوظة)
+            // استلام الطقم مباشرة عبر /kit <kitname>
             String kitName = args[0].toLowerCase();
             if (kitsConfig.contains("kits." + kitName)) {
                 String requiredPerm = "friendlykits.use." + kitName;
@@ -327,6 +353,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                     suggestions.add("delete");
                     suggestions.add("reload");
                     suggestions.add("add");
+                    suggestions.add("reset");
                 }
 
                 if (kitsConfig.isConfigurationSection("kits")) {
@@ -344,7 +371,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                     }
                 }
             } else if (args.length == 2) {
-                if (args[0].equalsIgnoreCase("add") && player.hasPermission("friendlykits.admin")) {
+                if ((args[0].equalsIgnoreCase("add") || args[0].equalsIgnoreCase("reset")) && player.hasPermission("friendlykits.admin")) {
                     if ("timer".startsWith(args[1].toLowerCase())) completions.add("timer");
                 } else if (args[0].equalsIgnoreCase("delete") && player.hasPermission("friendlykits.admin")) {
                     if (kitsConfig.isConfigurationSection("kits")) {
@@ -353,7 +380,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
                         }
                     }
                 }
-            } else if (args.length == 3 && args[0].equalsIgnoreCase("add") && args[1].equalsIgnoreCase("timer") && player.hasPermission("friendlykits.admin")) {
+            } else if (args.length == 3 && (args[0].equalsIgnoreCase("add") || args[0].equalsIgnoreCase("reset")) && args[1].equalsIgnoreCase("timer") && player.hasPermission("friendlykits.admin")) {
                 if (kitsConfig.isConfigurationSection("kits")) {
                     for (String kitName : kitsConfig.getConfigurationSection("kits").getKeys(false)) {
                         if (kitName.toLowerCase().startsWith(args[2].toLowerCase())) completions.add(kitName);
@@ -370,18 +397,13 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         return completions;
     }
 
-    /**
-     * حفظ أغراض ودروع اللاعب واليد الإضافية باستخدام استنساخ حقيقي (Deep Clone)
-     */
     private void saveKitFromPlayer(String kitName, Player player) {
         String basePath = "kits." + kitName;
         long existingCooldown = kitsConfig.getLong(basePath + ".cooldown", 0);
         ItemStack existingIcon = kitsConfig.getItemStack(basePath + ".icon");
 
-        // مسح القسم القديم بالكامل لمنع تراكم أي عناصر قديمة
         kitsConfig.set(basePath, null);
 
-        // 1. استنساخ وحفظ خانات الحقيبة
         ItemStack[] storage = player.getInventory().getStorageContents();
         for (int i = 0; i < storage.length; i++) {
             ItemStack item = storage[i];
@@ -390,7 +412,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
             }
         }
 
-        // 2. استنساخ وحفظ الدروع الأربعة
         ItemStack helmet = player.getInventory().getHelmet();
         ItemStack chest = player.getInventory().getChestplate();
         ItemStack legs = player.getInventory().getLeggings();
@@ -401,13 +422,11 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         if (legs != null && legs.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.leggings", legs.clone());
         if (boots != null && boots.getType() != Material.AIR) kitsConfig.set(basePath + ".armor.boots", boots.clone());
 
-        // 3. استنساخ وحفظ اليد الإضافية
         ItemStack offhand = player.getInventory().getItemInOffHand();
         if (offhand != null && offhand.getType() != Material.AIR) {
             kitsConfig.set(basePath + ".offhand", offhand.clone());
         }
 
-        // 4. تعيين الأيقونة
         if (existingIcon != null) {
             kitsConfig.set(basePath + ".icon", existingIcon.clone());
         } else {
@@ -417,9 +436,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
             kitsConfig.set(basePath + ".icon", icon);
         }
 
-        // الحفاظ على المؤقت المسجل
         kitsConfig.set(basePath + ".cooldown", existingCooldown);
-
         saveKitsConfig();
     }
 
@@ -440,7 +457,7 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
 
                     long cd = kitsConfig.getLong("kits." + kitName + ".cooldown", 0);
                     if (cd > 0) {
-                        lore.add(ChatColor.AQUA + "Timer: " + ChatColor.WHITE + formatSeconds(cd));
+                        lore.add(ChatColor.AQUA + "Cooldown: " + ChatColor.WHITE + formatSeconds(cd));
                     }
 
                     if (player.hasPermission("friendlykits.admin")) {
@@ -510,13 +527,9 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
         player.openInventory(previewInv);
     }
 
-    /**
-     * إعطاء الطقم للاعب عبر استنساخ الأدوات بالكامل لعدم التعديل على الملف
-     */
     private void giveKit(Player player, String kitName) {
         String basePath = "kits." + kitName;
 
-        // 1. إضافة الأغراض للحقيبة بنسخ جديدة
         if (kitsConfig.isConfigurationSection(basePath + ".storage")) {
             for (String key : kitsConfig.getConfigurationSection(basePath + ".storage").getKeys(false)) {
                 ItemStack item = kitsConfig.getItemStack(basePath + ".storage." + key);
@@ -526,7 +539,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
             }
         }
 
-        // 2. إلباس الدروع بنسخ مستقلة
         ItemStack helmet = kitsConfig.getItemStack(basePath + ".armor.helmet");
         ItemStack chest = kitsConfig.getItemStack(basePath + ".armor.chestplate");
         ItemStack legs = kitsConfig.getItemStack(basePath + ".armor.leggings");
@@ -564,7 +576,6 @@ public class FriendlyKitsPlugin extends JavaPlugin implements Listener, CommandE
             }
         }
 
-        // 3. إضافة أداة اليد الإضافية بنسخة مستقلة
         ItemStack offhand = kitsConfig.getItemStack(basePath + ".offhand");
         if (offhand != null && offhand.getType() != Material.AIR) {
             if (player.getInventory().getItemInOffHand().getType() == Material.AIR) {
